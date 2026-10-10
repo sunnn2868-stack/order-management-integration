@@ -17,6 +17,9 @@ import com.example.orderapi.dto.CreateOrderResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.springframework.context.ApplicationEventPublisher;
+import com.example.orderapi.OrderCreatedEvent;
+
 @Service
 public class OrderService {
 
@@ -28,13 +31,17 @@ public class OrderService {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
 
+    private final ApplicationEventPublisher eventPublisher;
+
     public OrderService(
             OrderRepository orderRepository,
             InventoryClient inventoryClient,
-            IdempotencyService idempotencyService) {
+            IdempotencyService idempotencyService,
+            ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
         this.inventoryClient = inventoryClient;
         this.idempotencyService = idempotencyService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -89,6 +96,16 @@ public class OrderService {
         response.setStatus(savedOrder.getStatus());
 
         idempotencyService.saveResponse(idempotencyKey, response);
+
+        eventPublisher.publishEvent(
+                new OrderCreatedEvent(
+                        savedOrder.getOrderId(),
+                        savedOrder.getCustomerId(),
+                        savedOrder.getProductId(),
+                        savedOrder.getQuantity(),
+                        savedOrder.getStatus()
+                )
+        );
 
         return savedOrder;
     }
