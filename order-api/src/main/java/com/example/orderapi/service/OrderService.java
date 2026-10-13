@@ -17,8 +17,11 @@ import com.example.orderapi.dto.CreateOrderResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.springframework.context.ApplicationEventPublisher;
 import com.example.orderapi.OrderCreatedEvent;
+
+import com.example.orderapi.entity.OutboxEvent;
+import com.example.orderapi.repository.OutboxEventRepository;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class OrderService {
@@ -31,17 +34,21 @@ public class OrderService {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
 
-    private final ApplicationEventPublisher eventPublisher;
+
+    private final OutboxEventRepository outboxEventRepository;
+    private final ObjectMapper objectMapper;
 
     public OrderService(
             OrderRepository orderRepository,
             InventoryClient inventoryClient,
             IdempotencyService idempotencyService,
-            ApplicationEventPublisher eventPublisher) {
+            OutboxEventRepository outboxEventRepository,
+            ObjectMapper objectMapper) {
         this.orderRepository = orderRepository;
         this.inventoryClient = inventoryClient;
         this.idempotencyService = idempotencyService;
-        this.eventPublisher = eventPublisher;
+        this.outboxEventRepository = outboxEventRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -97,15 +104,35 @@ public class OrderService {
 
         idempotencyService.saveResponse(idempotencyKey, response);
 
-        eventPublisher.publishEvent(
-                new OrderCreatedEvent(
-                        savedOrder.getOrderId(),
-                        savedOrder.getCustomerId(),
-                        savedOrder.getProductId(),
-                        savedOrder.getQuantity(),
-                        savedOrder.getStatus()
-                )
-        );
+        try {
+            OrderCreatedEvent event = new OrderCreatedEvent(
+                    savedOrder.getOrderId(),
+                    savedOrder.getCustomerId(),
+                    savedOrder.getProductId(),
+                    savedOrder.getQuantity(),
+                    savedOrder.getStatus()
+            );
+
+            String payload = objectMapper.writeValueAsString(event);
+
+            OutboxEvent outboxEvent = new OutboxEvent(
+                    savedOrder.getOrderId(),
+                    "OrderCreatedEvent",
+                    payload
+            );
+
+            outboxEventRepository.save(outboxEvent);
+
+            logger.info(
+                    "Order-created event saved to outbox: orderId={}",
+                    savedOrder.getOrderId()
+            );
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Failed to save order-created event to outbox",
+                    exception
+            );
+        }
 
         return savedOrder;
     }

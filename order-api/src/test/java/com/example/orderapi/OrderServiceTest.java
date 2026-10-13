@@ -4,15 +4,16 @@ import com.example.orderapi.client.InventoryClient;
 import com.example.orderapi.dto.InventoryResponse;
 import com.example.orderapi.entity.Order;
 import com.example.orderapi.repository.OrderRepository;
+import com.example.orderapi.repository.OutboxEventRepository;
 import com.example.orderapi.service.IdempotencyService;
 import com.example.orderapi.service.OrderService;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.ObjectMapper;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -21,6 +22,8 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import org.junit.jupiter.api.BeforeEach;
 
 @ExtendWith(MockitoExtension.class)
 class OrderServiceTest {
@@ -34,8 +37,23 @@ class OrderServiceTest {
     @Mock
     private IdempotencyService idempotencyService;
 
-    @InjectMocks
     private OrderService orderService;
+
+    @Mock
+    private OutboxEventRepository outboxEventRepository;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @BeforeEach
+    void setUp() {
+        orderService = new OrderService(
+                orderRepository,
+                inventoryClient,
+                idempotencyService,
+                outboxEventRepository,
+                objectMapper
+        );
+    }
 
     @Test
     void shouldRejectOrderWhenProductIsUnavailable() {
@@ -103,6 +121,14 @@ class OrderServiceTest {
                 eq("test-success-key"),
                 any()
         );
+
+        verify(outboxEventRepository).save(
+                argThat(event ->
+                        event.getAggregateId() == 1
+                                && event.getEventType().equals("OrderCreatedEvent")
+                                && event.getStatus().equals("PENDING")
+                )
+        );
     }
 
     @Test
@@ -129,5 +155,6 @@ class OrderServiceTest {
 
         verify(orderRepository, never()).save(any(Order.class));
         verify(idempotencyService, never()).saveResponse(any(), any());
+        verify(outboxEventRepository, never()).save(any());
     }
 }
