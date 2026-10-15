@@ -40,6 +40,7 @@ The system implements retry handling, idempotency, correlation IDs, and the Tran
 - Testcontainers
 - Git and GitHub
 - Postman
+- Docker Desktop
 
 ## Architecture
 
@@ -49,7 +50,7 @@ The Order Management Integration System consists of two Spring Boot applications
 
 - **Order API:** Receives order requests, validates input, checks product availability through the Inventory API, and saves orders to PostgreSQL.
 - **Inventory API:** Provides inventory availability information through a REST API and consumes order-created events from RabbitMQ.
-- **PostgreSQL:** Stores order records, idempotency data, and outbox events.
+- **PostgreSQL:** Stores order records, idempotency data, outbox events, and processed order IDs.
 - **RabbitMQ:** Transfers order-created events from the Order API to the Inventory API.
 - **Transactional Outbox:** Stores order-created events in the same database transaction as the order, allowing events to be published reliably after the transaction commits.
 
@@ -70,16 +71,17 @@ The Order Management Integration System consists of two Spring Boot applications
 - **Correlation IDs:** Support tracing requests across service boundaries.
 - **Concurrent event claiming:** PostgreSQL `FOR UPDATE SKIP LOCKED` helps prevent multiple workers from claiming the same pending event.
 - **Stale-claim recovery:** Resets events that remain `IN_PROGRESS` for more than five minutes so they can be retried.
+- **Publisher confirmations:** Help the publisher determine whether RabbitMQ acknowledged a message and detect returned, unroutable messages when publisher returns are configured.
 
 The system is designed to improve reliability during temporary service outages and application interruptions. Because message delivery can occur more than once, consumers must remain idempotent.
 
 ## Configuration
 
-Configure the local database and RabbitMQ connection settings in the appropriate local application properties files.
+Configure the local database and RabbitMQ connection settings in the appropriate application properties files.
 
 The Order API uses the `orderdb` PostgreSQL database by default. Ensure the database credentials, connection URL, and RabbitMQ settings match your local environment.
 
-For RabbitMQ, the default local connection typically uses:
+For RabbitMQ, the local connection typically uses:
 
 - Host: `localhost`
 - AMQP port: `5672`
@@ -105,6 +107,8 @@ Install or configure:
 
 Ensure PostgreSQL is running and the `orderdb` database exists.
 
+Verify that the database URL, username, and password match the Order API's local configuration.
+
 ### 2. Start RabbitMQ
 
 Start the RabbitMQ management container if it has not already been created:
@@ -119,19 +123,91 @@ If the container already exists but is stopped, start it with:
 docker start rabbitmq
 ```
 
-Open `http://localhost:15672` to access the management interface. Ensure the `order.created` queue is configured as required by the application.
+Open [http://localhost:15672](http://localhost:15672) to access the management interface.
+
+The Order API publishes messages to the default exchange using the routing key `order.created`. Ensure the `order.created` queue exists in RabbitMQ so messages can be routed to it. In the verified local setup, this queue is present and bound to the default exchange.
 
 ### 3. Start the Inventory API
 
-Open the Inventory API project in IntelliJ and start the Spring Boot application. Confirm that it runs on port `8081`.
+Open the Inventory API project in IntelliJ and start the Spring Boot application.
+
+Confirm that it runs on port `8081`.
 
 ### 4. Start the Order API
 
-Open the Order API project and start the Spring Boot application. Confirm that it runs on port `8080`.
+Open the Order API project in IntelliJ and start the Spring Boot application.
+
+Confirm that it runs on port `8080`.
 
 ### 5. Test with Postman
 
-Send requests to the Order API to create and retrieve orders. Verify that inventory checks, database persistence, and event publishing work as expected.
+#### Create an order successfully
+
+**Request**
+
+`POST http://localhost:8080/orders`
+
+**Headers**
+
+```http
+Content-Type: application/json
+Idempotency-Key: demo-order-001
+X-Correlation-ID: demo-correlation-001
+```
+
+**Body**
+
+```json
+{
+  "customerId": 1,
+  "productId": 5001,
+  "quantity": 1
+}
+```
+
+Product `5001` is the configured available product in the local Inventory API.
+
+A successful request should return `201 Created` with the created order's details, including its generated `orderId`.
+
+Example response:
+
+```json
+{
+  "customerId": 1,
+  "orderId": 52,
+  "productId": 5001,
+  "quantity": 1,
+  "status": "CREATED"
+}
+```
+
+The returned `orderId` is an example; your actual ID may differ.
+
+#### Retrieve an order
+
+**Request**
+
+`GET http://localhost:8080/orders/{orderId}`
+
+Replace `{orderId}` with the ID returned by the create-order request.
+
+#### Test an unavailable product
+
+Send another `POST /orders` request using a new `Idempotency-Key` and an unavailable product ID, such as `1`.
+
+The request should be rejected because the Inventory API reports that the product is unavailable.
+
+#### Verify event processing
+
+After creating an order, verify that:
+
+- The order is stored in PostgreSQL.
+- Its outbox event reaches `PUBLISHED`.
+- The Inventory API receives the RabbitMQ event.
+- The processed-order table contains the order ID.
+- Repeated delivery of the same event does not create a duplicate processed-order record.
+
+`PUBLISHED` indicates that the publisher recorded successful publication. Consumer logs and the processed-order table provide separate evidence that the Inventory API processed the event.
 
 ## Transactional Outbox Pattern
 
@@ -149,7 +225,7 @@ A scheduled publisher processes pending events and sends them to RabbitMQ.
 4. PostgreSQL `FOR UPDATE SKIP LOCKED` helps prevent concurrent workers from claiming the same pending event.
 5. The publisher sends the event to RabbitMQ and waits for publisher confirmation.
 6. Successfully published events are marked `PUBLISHED`.
-7. If publishing fails, the event is returned to `PENDING` for a later attempt.
+7. If publishing fails, the event remains or returns to `PENDING` for a later attempt.
 
 ### Stale Event Recovery
 
@@ -165,7 +241,7 @@ This supports recovery after application interruptions and temporary RabbitMQ ou
 
 The Inventory API records processed order IDs in PostgreSQL. The order ID is protected by a primary key, and duplicate inserts are ignored.
 
-This prevents the same order-created event from being processed as a new event more than once by the database-backed listener.
+This prevents the same order-created event from being recorded as a new processed event more than once by the database-backed listener.
 
 The database record and event processing are handled transactionally so a failed database operation can be retried rather than incorrectly recording an event as successfully processed.
 
@@ -196,6 +272,20 @@ Run the automated tests using the Maven Wrapper from the `order-api` project dir
 ./mvnw test
 ```
 
+To run the full verification lifecycle, including compilation and verification checks:
+
+**Windows**
+
+```powershell
+.\mvnw.cmd clean verify
+```
+
+**macOS/Linux**
+
+```bash
+./mvnw clean verify
+```
+
 The test suite includes unit tests and PostgreSQL integration tests using Testcontainers.
 
 Coverage includes:
@@ -205,6 +295,7 @@ Coverage includes:
 - Preventing duplicate claims
 - Skipping rows locked by another transaction
 - Recovery of stale outbox claims
+- Order creation and inventory validation
 
 Docker must be available for tests that use Testcontainers.
 
