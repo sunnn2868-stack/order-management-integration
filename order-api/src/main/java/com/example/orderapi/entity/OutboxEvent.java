@@ -34,10 +34,13 @@ public class OutboxEvent {
 
     private LocalDateTime publishedAt;
 
+    private LocalDateTime claimedAt;
+
+    // Required by JPA
     protected OutboxEvent() {
-        // Required by JPA
     }
 
+    // Creates a new outbox event
     public OutboxEvent(
             Integer aggregateId,
             String eventType,
@@ -48,6 +51,31 @@ public class OutboxEvent {
         this.payload = payload;
         this.status = "PENDING";
         this.createdAt = LocalDateTime.now();
+    }
+
+    // Reconstructs an existing outbox event from a database row
+    public OutboxEvent(
+            Long id,
+            Integer aggregateId,
+            String eventType,
+            String payload,
+            String status,
+            LocalDateTime createdAt,
+            LocalDateTime publishedAt,
+            LocalDateTime claimedAt
+    ) {
+        this.id = id;
+        this.aggregateId = aggregateId;
+        this.eventType = eventType;
+        this.payload = payload;
+        this.status = status;
+        this.createdAt = createdAt;
+        this.publishedAt = publishedAt;
+        this.claimedAt = claimedAt;
+    }
+
+    public LocalDateTime getClaimedAt() {
+        return claimedAt;
     }
 
     public Long getId() {
@@ -65,6 +93,7 @@ public class OutboxEvent {
     public String getPayload() {
         return payload;
     }
+
     public String getStatus() {
         return status;
     }
@@ -77,8 +106,19 @@ public class OutboxEvent {
         return publishedAt;
     }
 
+    public void markPending() {
+        this.status = "PENDING";
+        this.claimedAt = null;
+    }
+
+    public void markInProgress() {
+        this.status = "IN_PROGRESS";
+        this.claimedAt = LocalDateTime.now();
+    }
+
     public void markPublished() {
         this.status = "PUBLISHED";
         this.publishedAt = LocalDateTime.now();
+        this.claimedAt = null;
     }
 }

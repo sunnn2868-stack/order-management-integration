@@ -2,7 +2,6 @@ package com.example.orderapi.service;
 
 import com.example.orderapi.OrderEventPublisher;
 import com.example.orderapi.entity.OutboxEvent;
-import com.example.orderapi.repository.OutboxEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,27 +14,30 @@ public class OutboxPublisherService {
     private static final Logger logger =
             LoggerFactory.getLogger(OutboxPublisherService.class);
 
-    private final OutboxEventRepository outboxEventRepository;
-    private final OrderEventPublisher orderEventPublisher;
+    private static final int BATCH_SIZE = 10;
 
+    private final OutboxEventClaimService outboxEventClaimService;
+    private final OrderEventPublisher orderEventPublisher;
     private final OutboxEventStatusService outboxEventStatusService;
 
     public OutboxPublisherService(
-            OutboxEventRepository outboxEventRepository,
+            OutboxEventClaimService outboxEventClaimService,
             OrderEventPublisher orderEventPublisher,
-            OutboxEventStatusService outboxEventStatusService) {
-        this.outboxEventRepository = outboxEventRepository;
+            OutboxEventStatusService outboxEventStatusService
+    ) {
+        this.outboxEventClaimService = outboxEventClaimService;
         this.orderEventPublisher = orderEventPublisher;
         this.outboxEventStatusService = outboxEventStatusService;
     }
 
     public void publishPendingEvents() {
-        List<OutboxEvent> pendingEvents =
-                outboxEventRepository.findByStatusOrderByCreatedAtAsc("PENDING");
+        List<OutboxEvent> claimedEvents =
+                outboxEventClaimService.claimPendingEvents(BATCH_SIZE);
 
-        for (OutboxEvent event : pendingEvents) {
+        for (OutboxEvent event : claimedEvents) {
             try {
                 orderEventPublisher.publishOrderCreated(event.getPayload());
+
                 outboxEventStatusService.markAsPublished(event);
 
                 logger.info(
@@ -44,6 +46,8 @@ public class OutboxPublisherService {
                         event.getAggregateId()
                 );
             } catch (Exception exception) {
+                outboxEventStatusService.markAsPending(event);
+
                 logger.error(
                         "Failed to publish outbox event: outboxId={}, orderId={}",
                         event.getId(),

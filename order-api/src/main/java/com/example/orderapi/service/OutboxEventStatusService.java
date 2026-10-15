@@ -16,6 +16,12 @@ public class OutboxEventStatusService {
     }
 
     @Transactional
+    public void markAsPending(OutboxEvent event) {
+        event.markPending();
+        outboxEventRepository.save(event);
+    }
+
+    @Transactional
     public void markAsPublished(OutboxEvent event) {
         event.markPublished();
         outboxEventRepository.save(event);

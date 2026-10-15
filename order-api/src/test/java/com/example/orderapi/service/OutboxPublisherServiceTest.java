@@ -1,9 +1,7 @@
-package com.example.orderapi;
+package com.example.orderapi.service;
 
+import com.example.orderapi.OrderEventPublisher;
 import com.example.orderapi.entity.OutboxEvent;
-import com.example.orderapi.repository.OutboxEventRepository;
-import com.example.orderapi.service.OutboxEventStatusService;
-import com.example.orderapi.service.OutboxPublisherService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,60 +13,60 @@ import java.util.List;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class OutboxPublisherServiceTest {
+class OutboxPublisherServiceTest {
 
     @Mock
-    private OutboxEventRepository outboxEventRepository;
+    private OutboxEventClaimService outboxEventClaimService;
 
     @Mock
     private OrderEventPublisher orderEventPublisher;
 
-    private OutboxPublisherService outboxPublisherService;
-
     @Mock
     private OutboxEventStatusService outboxEventStatusService;
+
+    private OutboxPublisherService outboxPublisherService;
 
     @BeforeEach
     void setUp() {
         outboxPublisherService = new OutboxPublisherService(
-                outboxEventRepository,
+                outboxEventClaimService,
                 orderEventPublisher,
                 outboxEventStatusService
         );
     }
 
     @Test
-    void shouldPublishPendingEventAndMarkItPublished() {
+    void shouldPublishClaimedEventAndMarkItPublished() {
         OutboxEvent event = new OutboxEvent(
                 50,
                 "OrderCreatedEvent",
                 """
-{"orderId":50,"customerId":404,"productId":5001,"quantity":2,"status":"CREATED"}
-                        """
+                {"orderId":50,"customerId":404,"productId":5001,"quantity":2,"status":"CREATED"}
+                """
         );
 
-        when(outboxEventRepository
-                .findByStatusOrderByCreatedAtAsc("PENDING"))
+        when(outboxEventClaimService.claimPendingEvents(10))
                 .thenReturn(List.of(event));
 
         outboxPublisherService.publishPendingEvents();
 
+        verify(outboxEventClaimService).claimPendingEvents(10);
         verify(orderEventPublisher).publishOrderCreated(event.getPayload());
         verify(outboxEventStatusService).markAsPublished(event);
+        verify(outboxEventStatusService, never()).markAsPending(event);
     }
 
     @Test
-    void shouldLeaveEventPendingWhenPublishingFails() {
+    void shouldResetEventToPendingWhenPublishingFails() {
         OutboxEvent event = new OutboxEvent(
                 51,
                 "OrderCreatedEvent",
                 """
-    {"orderId":51,"customerId":404,"productId":5001,"quantity":2,"status":"CREATED"}
-    """
+                {"orderId":51,"customerId":404,"productId":5001,"quantity":2,"status":"CREATED"}
+                """
         );
 
-        when(outboxEventRepository
-                .findByStatusOrderByCreatedAtAsc("PENDING"))
+        when(outboxEventClaimService.claimPendingEvents(10))
                 .thenReturn(List.of(event));
 
         doThrow(new IllegalStateException("RabbitMQ unavailable"))
@@ -77,11 +75,9 @@ public class OutboxPublisherServiceTest {
 
         outboxPublisherService.publishPendingEvents();
 
+        verify(outboxEventClaimService).claimPendingEvents(10);
         verify(orderEventPublisher).publishOrderCreated(event.getPayload());
-        verify(outboxEventRepository, never()).save(event);
-        org.junit.jupiter.api.Assertions.assertEquals(
-                "PENDING",
-                event.getStatus()
-        );
+        verify(outboxEventStatusService).markAsPending(event);
+        verify(outboxEventStatusService, never()).markAsPublished(event);
     }
 }
