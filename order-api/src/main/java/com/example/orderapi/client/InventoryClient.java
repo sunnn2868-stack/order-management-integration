@@ -11,8 +11,8 @@ public class InventoryClient {
 
     private final RestClient restClient;
 
-    public InventoryClient() {
-        this.restClient = RestClient.builder()
+    public InventoryClient(RestClient.Builder builder) {
+        this.restClient = builder
                 .baseUrl("http://localhost:8081")
                 .build();
     }
