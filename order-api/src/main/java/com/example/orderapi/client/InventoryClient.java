@@ -6,6 +6,8 @@ import org.springframework.web.client.RestClient;
 
 import org.springframework.web.client.HttpServerErrorException;
 
+import org.springframework.web.client.ResourceAccessException;
+
 @Component
 public class InventoryClient {
 
@@ -49,6 +51,19 @@ public class InventoryClient {
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("Retry interrupted", e);
                 }
+            }
+
+            catch (ResourceAccessException ex) {
+                System.err.println(
+                        "Inventory service connection or read timeout: "
+                                + ex.getMessage()
+                );
+
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                        "Inventory service is currently unavailable",
+                        ex
+                );
             }
         }
 

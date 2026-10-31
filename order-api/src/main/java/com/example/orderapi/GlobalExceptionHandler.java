@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 
 import org.springframework.web.client.HttpServerErrorException;
 
+import org.springframework.web.server.ResponseStatusException;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,6 +25,19 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(error);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatusException(
+            ResponseStatusException ex) {
+
+        Map<String, String> error = new HashMap<>();
+        error.put("status", String.valueOf(ex.getStatusCode().value()));
+        error.put("message", ex.getReason());
+
+        return ResponseEntity
+                .status(ex.getStatusCode())
                 .body(error);
     }
 }
