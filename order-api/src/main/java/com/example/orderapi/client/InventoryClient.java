@@ -1,12 +1,13 @@
+
 package com.example.orderapi.client;
 
 import com.example.orderapi.dto.InventoryResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
-
 import org.springframework.web.client.HttpServerErrorException;
-
 import org.springframework.web.client.ResourceAccessException;
+
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 
 @Component
 public class InventoryClient {
@@ -19,6 +20,10 @@ public class InventoryClient {
                 .build();
     }
 
+    @CircuitBreaker(
+            name = "inventory",
+            fallbackMethod = "inventoryFallback"
+    )
     public InventoryResponse getInventory(
             int productId,
             String correlationId) {
@@ -49,11 +54,13 @@ public class InventoryClient {
                     Thread.sleep(1000L * attempt);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Retry interrupted", e);
+                    throw new IllegalStateException(
+                            "Retry interrupted", e
+                    );
                 }
-            }
 
-            catch (ResourceAccessException ex) {
+            } catch (ResourceAccessException ex) {
+
                 System.err.println(
                         "Inventory service connection or read timeout: "
                                 + ex.getMessage()
@@ -68,5 +75,22 @@ public class InventoryClient {
         }
 
         throw new IllegalStateException("Inventory request failed");
+    }
+
+    public InventoryResponse inventoryFallback(
+            int productId,
+            String correlationId,
+            Throwable ex) {
+
+        System.err.println(
+                "Inventory circuit breaker activated: "
+                        + ex.getMessage()
+        );
+
+        throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "Inventory service is temporarily unavailable",
+                ex
+        );
     }
 }
