@@ -2,12 +2,14 @@
 package com.example.orderapi.client;
 
 import com.example.orderapi.dto.InventoryResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import org.springframework.web.server.ResponseStatusException;
 
 @Component
 public class InventoryClient {
@@ -75,6 +77,53 @@ public class InventoryClient {
         }
 
         throw new IllegalStateException("Inventory request failed");
+    }
+
+    public void reserveStock(
+            int productId,
+            Long orderId,
+            int quantity,
+            String correlationId) {
+
+        try {
+            restClient.post()
+                    .uri(uriBuilder -> uriBuilder
+                            .path("/inventory/{productId}/reserve")
+                            .queryParam("orderId", orderId)
+                            .queryParam("quantity", quantity)
+                            .build(productId))
+                    .header("X-Correlation-ID", correlationId)
+                    .retrieve()
+                    .toBodilessEntity();
+
+        } catch (ResourceAccessException ex) {
+
+            System.err.println(
+                    "Inventory reservation connection failure: "
+                            + ex.getMessage()
+            );
+
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Inventory service is currently unavailable",
+                    ex
+            );
+        }
+    }
+
+    public void releaseStock(
+            int productId,
+            Long orderId,
+            String correlationId) {
+
+        restClient.post()
+                .uri(uriBuilder -> uriBuilder
+                        .path("/inventory/{productId}/release")
+                        .queryParam("orderId", orderId)
+                        .build(productId))
+                .header("X-Correlation-ID", correlationId)
+                .retrieve()
+                .toBodilessEntity();
     }
 
     public InventoryResponse inventoryFallback(
